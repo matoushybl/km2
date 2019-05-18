@@ -12,6 +12,8 @@ use core::marker::PhantomData;
 use core::ops::Deref;
 
 
+use cortex_m::asm;
+
 /// SPI error
 #[derive(Debug)]
 pub enum Error {
@@ -52,7 +54,7 @@ impl<SpiPeriph, SCK, MISO, MOSI, MODE> SPI<SpiPeriph, SCK, MISO, MOSI, MODE>
     where
         SpiPeriph: Deref<Target = SpiRegisterBlock>
 {
-    fn read_data_register(self) -> nb::Result<u16, Error> {
+    fn read_data_register(&mut self) -> nb::Result<u16, Error> {
         let sr = self.spi.sr.read();
 
         if sr.ovr().bit_is_set() {
@@ -68,14 +70,17 @@ impl<SpiPeriph, SCK, MISO, MOSI, MODE> SPI<SpiPeriph, SCK, MISO, MOSI, MODE>
         }
     }
 
-    fn write_data_register(self, data: u16) -> nb::Result<(), Error> {
+    fn write_data_register(&mut self, data: u16) -> nb::Result<(), Error> {
         let sr = self.spi.sr.read();
 
         if sr.ovr().bit_is_set() {
+            asm::bkpt();
             Err(nb::Error::Other(Error::Overrun))
         } else if sr.modf().bit_is_set() {
+            asm::bkpt();
             Err(nb::Error::Other(Error::ModeFault))
         } else if sr.crcerr().bit_is_set() {
+            asm::bkpt();
             Err(nb::Error::Other(Error::Crc))
         } else if sr.txe().bit_is_set() {
             self.spi.dr.write(|w| unsafe { w.bits(data as u32) });
@@ -109,12 +114,18 @@ impl<SpiPeriph, SCK, MISO, MOSI, MODE> SPI<SpiPeriph, SCK, MISO, MOSI, MODE>
                 speed: F,
                 frame_size: u8,
                 lsb_first: bool,
-                rcc: &mut Rcc) -> SPI<SpiPeriph, SCK, MISO, MOSI, NonDirectional>
+                rcc: &mut Rcc, interface_mode: MODE) -> SPI<SpiPeriph, SCK, MISO, MOSI, NonDirectional>
         where
             SCK: SckPin<SpiPeriph>,
             MISO: MisoPin<SpiPeriph>,
             MOSI: MosiPin<SpiPeriph>,
             F: Into<Hertz> {
+
+        rcc.regs.apb2enr.modify(|_, w| w.spi1en().set_bit());
+
+        /* Reset SPI */
+        rcc.regs.apb2rstr.modify(|_, w| w.spi1rst().set_bit());
+        rcc.regs.apb2rstr.modify(|_, w| w.spi1rst().clear_bit());
 
         SPI {
             spi,
@@ -142,7 +153,7 @@ impl<SpiPeriph, SCK, MISO, MOSI> SPI<SpiPeriph, SCK, MISO, MOSI, NonDirectional>
                     .frxth()
                     .bit(self.frame_size > 8)
                     .ds()
-                    .bits(self.frame_size)
+                    .bits(self.frame_size - 1)
                     .ssoe()
                     .clear_bit()
             }
@@ -171,7 +182,7 @@ impl<SpiPeriph, SCK, MISO, MOSI> SPI<SpiPeriph, SCK, MISO, MOSI, NonDirectional>
                 .ssm() // in our case NSS is disconnected, true is set for better compatibility, this should be handled in a better way
                 .set_bit()
                 .ssi()
-                .clear_bit()
+                .set_bit()
                 .lsbfirst()
                 .bit(lsb_first)
                 .mstr().set_bit()
@@ -186,12 +197,7 @@ impl<SpiPeriph, SCK, MISO, MOSI> SPI<SpiPeriph, SCK, MISO, MOSI, NonDirectional>
         self
     }
 
-    pub fn into_write_only(mut self: Self, mosi: MOSI) -> SPI<SpiPeriph, SCK, MISO, MOSI, SimplexWrite> {
-        // most likely not needed
-//        self.spi.cr1.write(|w| w.spe().clear_bit() ); // disable SPI
-//
-//        self.spi.cr1.write(|w| w.spe().set_bit() ); // enable SPI
-
+    pub fn into_write_only(self, mosi: MOSI) -> SPI<SpiPeriph, SCK, MISO, MOSI, SimplexWrite> {
         SPI {
             spi: self.spi,
             sck: self.sck,
@@ -202,7 +208,7 @@ impl<SpiPeriph, SCK, MISO, MOSI> SPI<SpiPeriph, SCK, MISO, MOSI, NonDirectional>
         }
     }
 
-    pub fn into_read_only(mut self: Self, miso: MISO) -> SPI<SpiPeriph, SCK, MISO, MOSI, SimplexRead> {
+    pub fn into_read_only(self, miso: MISO) -> SPI<SpiPeriph, SCK, MISO, MOSI, SimplexRead> {
         self.spi.cr1.write(|w| w.spe().clear_bit() ); // disable SPI
         self.spi.cr1.write(|w| w.rxonly().set_bit() );
         self.spi.cr1.write(|w| w.spe().set_bit() ); // enable SPI
@@ -217,7 +223,7 @@ impl<SpiPeriph, SCK, MISO, MOSI> SPI<SpiPeriph, SCK, MISO, MOSI, NonDirectional>
         }
     }
 
-    pub fn into_full_duplex(mut self: Self, miso: MISO, mosi: MOSI) -> SPI<SpiPeriph, SCK, MISO, MOSI, FullDuplex> {
+    pub fn into_full_duplex(self, miso: MISO, mosi: MOSI) -> SPI<SpiPeriph, SCK, MISO, MOSI, FullDuplex> {
         self.spi.cr1.write(|w| w.spe().clear_bit() ); // disable SPI
 
         self.spi.cr1.write(|w| w.spe().set_bit() ); // enable SPI
@@ -232,72 +238,71 @@ impl<SpiPeriph, SCK, MISO, MOSI> SPI<SpiPeriph, SCK, MISO, MOSI, NonDirectional>
         }
     }
 }
-//
-//pub trait Read {
-//    type Error;
-//
-//    fn read(self) -> nb::Result<u16, Self::Error>;
-//}
-//
-//pub trait Send {
-//    type Error;
-//
-//    fn send(self, word: u16) -> nb::Result<(), Self::Error>;
-//}
-//
-//pub trait FullDuplexCommunication: Read + Send {
-//
-//}
-//
-//impl<SpiPeriph, SCK, MISO, MOSI> Read
-//for SPI<SpiPeriph, SCK, MISO, MOSI, FullDuplex>
-//    where
-//        SpiPeriph: Deref<Target = SpiRegisterBlock>,
-//{
-//    type Error = Error;
-//
-//    fn read(self) -> nb::Result<u16, Error> {
-//        self.read_data_register()
-//    }
-//}
-//
-//impl<SpiPeriph, SCK, MISO, MOSI> Send
-//for SPI<SpiPeriph, SCK, MISO, MOSI, FullDuplex>
-//    where
-//        SpiPeriph: Deref<Target = SpiRegisterBlock>,
-//{
-//    type Error = Error;
-//
-//    fn send(self, word: u16) -> nb::Result<(), Error> {
-//        self.write_data_register(word)
-//    }
-//}
-//
-//
-//impl<SpiPeriph, SCK, MISO, MOSI> FullDuplexCommunication
-//for SPI<SpiPeriph, SCK, MISO, MOSI, FullDuplex>
-//    where SpiPeriph: Deref<Target = SpiRegisterBlock> { }
-//
-//impl<SpiPeriph, SCK, MISO, MOSI> Read
-//for SPI<SpiPeriph, SCK, MISO, MOSI, SimplexRead>
-//    where
-//        SpiPeriph: Deref<Target = SpiRegisterBlock>,
-//{
-//    type Error = Error;
-//
-//    fn read(self) -> nb::Result<u16, Error> {
-//        self.read_data_register()
-//    }
-//}
-//
-//impl<SpiPeriph, SCK, MISO, MOSI> Send
-//for SPI<SpiPeriph, SCK, MISO, MOSI, SimplexWrite>
-//    where
-//        SpiPeriph: Deref<Target = SpiRegisterBlock>,
-//{
-//    type Error = Error;
-//
-//    fn send(self, word: u16) -> nb::Result<(), Error> {
-//        self.write_data_register(word)
-//    }
-//}
+
+pub trait Read {
+    type Error;
+
+    fn read(&mut self) -> nb::Result<u16, Self::Error>;
+}
+
+pub trait Send {
+    type Error;
+
+    fn send(&mut self, word: u16) -> nb::Result<(), Self::Error>;
+}
+
+pub trait FullDuplexCommunication: Read + Send {
+
+}
+
+impl<SpiPeriph, SCK, MISO, MOSI> Read
+for SPI<SpiPeriph, SCK, MISO, MOSI, FullDuplex>
+    where
+        SpiPeriph: Deref<Target = SpiRegisterBlock>,
+{
+    type Error = Error;
+
+    fn read(&mut self) -> nb::Result<u16, Error> {
+        self.read_data_register()
+    }
+}
+
+impl<SpiPeriph, SCK, MISO, MOSI> Send
+for SPI<SpiPeriph, SCK, MISO, MOSI, FullDuplex>
+    where
+        SpiPeriph: Deref<Target = SpiRegisterBlock>,
+{
+    type Error = Error;
+
+    fn send(&mut self, word: u16) -> nb::Result<(), Error> {
+        self.write_data_register(word)
+    }
+}
+
+impl<SpiPeriph, SCK, MISO, MOSI> FullDuplexCommunication
+for SPI<SpiPeriph, SCK, MISO, MOSI, FullDuplex>
+    where SpiPeriph: Deref<Target = SpiRegisterBlock> { }
+
+impl<SpiPeriph, SCK, MISO, MOSI> Read
+for SPI<SpiPeriph, SCK, MISO, MOSI, SimplexRead>
+    where
+        SpiPeriph: Deref<Target = SpiRegisterBlock>,
+{
+    type Error = Error;
+
+    fn read(&mut self) -> nb::Result<u16, Error> {
+        self.read_data_register()
+    }
+}
+
+impl<SpiPeriph, SCK, MISO, MOSI> Send
+for SPI<SpiPeriph, SCK, MISO, MOSI, SimplexWrite>
+    where
+        SpiPeriph: Deref<Target = SpiRegisterBlock>,
+{
+    type Error = Error;
+
+    fn send(&mut self, word: u16) -> nb::Result<(), Error> {
+        self.write_data_register(word)
+    }
+}

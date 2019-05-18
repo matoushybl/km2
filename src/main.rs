@@ -19,20 +19,19 @@ use rt::{entry, exception};
 use core::cell::RefCell;
 use core::ops::DerefMut;
 
-use cortex_m_semihosting::{hprintln};
-
 use nb::*;
 
 mod i2c;
 use i2c::{I2c, SlaveAddress, SlaveRead};
 
-mod spi;
-use spi::{SPI, SimplexWrite};
+mod pin_defs;
+mod mcp4922;
 
 // temporary linking, move above if needed
 use arm::asm;
-use embedded_hal::spi::MODE_0;
-use crate::spi::{Send, NonDirectional};
+use embedded_hal::spi::{MODE_0, MODE_3};
+use stm32f0xx_hal::delay::Delay;
+use crate::mcp4922::Channel;
 
 // static variables - data and peripherals used in interrupts
 static LED: Mutex<RefCell<Option<hal::gpio::gpioa::PA2<Output<PushPull>>>>> = Mutex::new(RefCell::new(None));
@@ -57,21 +56,26 @@ fn main() -> ! {
     let mut sda: Option<hal::gpio::gpioa::PA10<Alternate<AF4>>> = None;
 
     let mut sck: Option<hal::gpio::gpioa::PA5<Alternate<AF0>>> = None;
-    let mut miso: Option<hal::gpio::gpioa::PA6<Alternate<AF0>>> = None;
+    let mut cs_pin: Option<hal::gpio::gpioa::PA6<Output<PushPull>>> = None;
     let mut mosi: Option<hal::gpio::gpioa::PA7<Alternate<AF0>>> = None;
 
     arm::interrupt::free( |cs| {
         scl.replace(gpioa.pa9.into_alternate_af4(cs));
         sda.replace(gpioa.pa10.into_alternate_af4(cs));
+
+        sck.replace(gpioa.pa5.into_alternate_af0(cs));
+        mosi.replace(gpioa.pa7.into_alternate_af0(cs));
+        cs_pin.replace(gpioa.pa6.into_push_pull_output(cs));
+
         LED.borrow(cs).replace(Some(gpioa.pa2.into_push_pull_output(cs)));
     });
 
-    let mut systick = core_peripherals.SYST;
-    systick.set_clock_source(syst::SystClkSource::Core);
-    systick.set_reload(8 * 500 / 10 * cortex_m::peripheral::SYST::get_ticks_per_10ms());
-    systick.clear_current();
-    systick.enable_counter();
-    systick.enable_interrupt();
+//    let mut systick = core_peripherals.SYST;
+//    systick.set_clock_source(syst::SystClkSource::Core);
+//    systick.set_reload(8 * 500 / 10 * cortex_m::peripheral::SYST::get_ticks_per_10ms());
+//    systick.clear_current();
+//    systick.enable_counter();
+//    systick.enable_interrupt();
 
     let mut i2c_slave = I2c::i2c1(device_peripherals.I2C1,
                                   (scl.unwrap(), sda.unwrap()),
@@ -80,34 +84,22 @@ fn main() -> ! {
 
     i2c_slave.set_own_slave_addr(0x55);
 
-    let spi: SPI<
-        hal::stm32::SPI1,
-        PA5<Alternate<AF0>>,
-        PA6<Alternate<AF0>>,
-        PA7<Alternate<AF0>>,
-        NonDirectional> = SPI::spi1(
+    let mut delay = Delay::new(core_peripherals.SYST, &rcc);
+
+    let mut dac = mcp4922::MCP4922::initialize(
         device_peripherals.SPI1,
         sck.unwrap(),
-        MODE_0,
-        1.mhz(),
-        16,
-        false,
+        mosi.unwrap(),
+        cs_pin.unwrap(),
         &mut rcc);
 
-
-    //.into_write_only(mosi.unwrap())
-    //spi.send(0xffff);
-
+    let data: [f32; 10] = [ 0.0, 0.5, 1.0, 1.5, 1.8, 2.4, 2.8, 3.0, 3.1, 3.3];
     loop {
-        hprintln!("waiting").unwrap();
-        block!(i2c_slave.wait_for_addressing());
+        for &value in &data {
+            dac.set_voltage(Channel::A, value);
+            dac.set_voltage(Channel::B, value);
 
-        let mut buffer: [u8; 5] = [0; 5];
-
-        let res1 = i2c_slave.read(&mut buffer);
-        match res1 {
-            Ok(..) => hprintln!("byte read {:?}", buffer).unwrap(),
-            Err(..) => hprintln!("read failed").unwrap()
+            delay.delay_ms(10_u16);
         }
     }
 }
