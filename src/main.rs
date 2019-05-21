@@ -11,7 +11,11 @@ use arm::peripheral::{syst, Peripherals};
 use arm::interrupt::{Mutex};
 
 use hal::{prelude::*, stm32};
-use hal::gpio::{GpioExt, Output, PushPull, AF0, AF4, Alternate, gpioa::{PA5, PA6, PA7}};
+use hal::stm32::interrupt;
+use hal::gpio::*;
+use hal::gpio::gpioa::*;
+use hal::gpio::gpiob::*;
+use hal::gpio::gpiof::*;
 use hal::time::KiloHertz;
 
 use rt::{entry, exception};
@@ -34,12 +38,10 @@ use stm32f0xx_hal::delay::Delay;
 use crate::mcp4922::Channel;
 
 // static variables - data and peripherals used in interrupts
-static LED: Mutex<RefCell<Option<hal::gpio::gpioa::PA2<Output<PushPull>>>>> = Mutex::new(RefCell::new(None));
+static LED: Mutex<RefCell<Option<PA2<Output<PushPull>>>>> = Mutex::new(RefCell::new(None));
 
 #[entry]
 fn main() -> ! {
-    asm::nop(); // To not have main optimize to abort in release mode, remove when you add code
-
     let core_peripherals = Peripherals::take().unwrap();
     let mut device_peripherals = stm32::Peripherals::take().unwrap();
 
@@ -48,16 +50,16 @@ fn main() -> ! {
         .sysclk(8.mhz())
         .freeze(&mut device_peripherals.FLASH);
 
-    let gpioa: hal::gpio::gpioa::Parts = device_peripherals.GPIOA.split(&mut rcc);
-    let gpiob: hal::gpio::gpiob::Parts = device_peripherals.GPIOB.split(&mut rcc);
-    let gpiof: hal::gpio::gpiof::Parts = device_peripherals.GPIOF.split(&mut rcc);
+    let gpioa: gpioa::Parts = device_peripherals.GPIOA.split(&mut rcc);
+    let gpiob: gpiob::Parts = device_peripherals.GPIOB.split(&mut rcc);
+    let gpiof: gpiof::Parts = device_peripherals.GPIOF.split(&mut rcc);
 
-    let mut scl: Option<hal::gpio::gpioa::PA9<Alternate<AF4>>> = None;
-    let mut sda: Option<hal::gpio::gpioa::PA10<Alternate<AF4>>> = None;
+    let mut scl: Option<PA9<Alternate<AF4>>> = None;
+    let mut sda: Option<PA10<Alternate<AF4>>> = None;
 
-    let mut sck: Option<hal::gpio::gpioa::PA5<Alternate<AF0>>> = None;
-    let mut cs_pin: Option<hal::gpio::gpioa::PA6<Output<PushPull>>> = None;
-    let mut mosi: Option<hal::gpio::gpioa::PA7<Alternate<AF0>>> = None;
+    let mut sck: Option<PA5<Alternate<AF0>>> = None;
+    let mut cs_pin: Option<PA6<Output<PushPull>>> = None;
+    let mut mosi: Option<PA7<Alternate<AF0>>> = None;
 
     arm::interrupt::free( |cs| {
         scl.replace(gpioa.pa9.into_alternate_af4(cs));
@@ -111,4 +113,18 @@ fn SysTick() {
             led.toggle();
         }
     })
+}
+
+enum I2CSlaveState {
+    Idle,
+    Addressed,
+    RegisterSet,
+    Reading,
+    Writing,
+    Error,
+}
+
+#[interrupt]
+fn I2C1() {
+
 }
