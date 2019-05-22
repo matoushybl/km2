@@ -33,4 +33,5 @@ load
 
 # start the process but immediately halt the processor
 stepi
-continue
+# continue
+quit
