@@ -44,7 +44,6 @@ impl<SPI, SCK, MOSI, CS> MCP4922<SPI, SCK, MOSI, CS> where
         rcc.regs.apb2rstr.modify(|_, w| w.spi1rst().clear_bit());
 
         spi.cr1.write(|w| w.spe().clear_bit() ); // disable SPI
-
         spi.cr2.write(|w|
             unsafe {
                 w
@@ -127,4 +126,3 @@ impl<SPI, SCK, MOSI, CS> MCP4922<SPI, SCK, MOSI, CS> where
         }
     }
 }
-

@@ -298,6 +298,12 @@ const APP: () = {
         }
     }
 
+    #[idle]
+    fn idle() -> ! {
+        loop {
+        }
+    }
+
     #[exception(resources = [LED, DAC, DAC_DATA, DAC_INDEX])]
     fn SysTick() {
         resources.LED.toggle();
@@ -343,8 +349,19 @@ const APP: () = {
                     resources.I2C_BUFFER[0] = (*resources.I2C_PERIPHERALS).txdr.read().bits() as u8;
                 }
             }
-            I2CSlaveState::Reading => {}
-            I2CSlaveState::Writing => {}
+            I2CSlaveState::Reading => {
+                if interface_status.txe().bit_is_set() {
+                    resources.I2C_BUFFER[*resources.I2C_BUFFER_INDEX as usize] = (*resources.I2C_PERIPHERALS).txdr.read().bits() as u8;
+                    *resources.I2C_BUFFER_INDEX += 1;
+                }
+            }
+            I2CSlaveState::Writing => {
+                if interface_status.rxne().bit_is_set() {
+
+                    resources.I2C_BUFFER[*resources.I2C_BUFFER_INDEX as usize] = (*resources.I2C_PERIPHERALS).rxdr.read().bits() as u8;
+                    *resources.I2C_BUFFER_INDEX += 1;
+                }
+            }
             I2CSlaveState::Error(..) => {
                 // nack here?
             }
