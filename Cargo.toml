@@ -1,4 +1,4 @@
-cargo-features = ["profile-overrides"]
+#cargo-features = ["profile-overrides"]
 
 [package]
 authors = ["Matous Hybl <hyblmatous@gmail.com>"]
@@ -48,10 +48,16 @@ name = "km2"
 test = false
 bench = false
 
+#[profile.dev]
+#debug = true
+#incremental = false
+#opt-level = 1
+#lto = true
+
 [profile.release]
 codegen-units = 1 # better optimizations
 debug = true # symbols are nice and they don't increase the size on Flash
 lto = true # better optimizations
-
-[profile.dev.overrides."*"] # +
-opt-level = "z" # +
+#
+#[profile.dev.overrides."*"] # +
+#opt-level = "z" # +

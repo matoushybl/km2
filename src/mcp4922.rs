@@ -11,7 +11,6 @@ use nb::*;
 use cortex_m::asm;
 use embedded_hal::spi::{MODE_0, Phase, Polarity};
 use embedded_hal::digital::OutputPin;
-use core::cmp::{min, max};
 
 pub enum Channel {
     A, B
@@ -100,7 +99,7 @@ impl<SPI, SCK, MOSI, CS> MCP4922<SPI, SCK, MOSI, CS> where
         }
 
         self.cs.set_low();
-        block!(self.write_data_register(header << 12 | duty));
+        block!(self.write_data_register(header << 12 | duty)).unwrap();
         self.cs.set_high();
     }
 
